@@ -3,7 +3,6 @@ import numpy as np
 import soundfile as sf
 import simpleaudio as sa
 import time
-import tensorflow.keras.backend as kb
 import tensorflow as tf
 from IPython.display import display, Audio
 
@@ -159,53 +158,29 @@ def audio_playback(audio_data, samplerate = 44100, max_playback_time = 2):
     time.sleep(max_playback_time)
     play_obj.stop()
     
-def audio_playback_gui(audio_data, samplerate = 44100, file_name = 'audio_example_0', audio_example_folder = 'audio_examples'):
+def audio_playback_gui(file, samplerate = 44100):
     '''
-    Improved version of audio_playback() based on IPython; it integrates well
+    Audio playback GUI based on IPython; it integrates well
     with jupyter notebooks. 
     
     Parameters
     ----------
-    audio_data : str or numpy.ndarray
+    file : str or numpy.ndarray
         Either a file name or a numpy array containing wave data 
     samplerate : int, optional
         The default is 44100.
         Unused if audio_data is string.
-    file_name : str, optional
-        The default is 'audio_example_0'.
-        Unused if audio_data is string.
-    audio_example_path: str, optional
-        The default is 'audio_examples'.
-        Unused if audio_data is string.
-
+    
     Returns
     -------
     None.
 
     '''
 
-    # if audio_data is a numpy array, create a corresponding audio file
-    if isinstance(audio_data, np.ndarray):
-
-        # create a folder to store the audio examples (if it does not exist yet)
-        if not os.path.exists(audio_example_folder):
-            os.makedirs(audio_example_folder)
-
-        # make sure audio data has shape = frames*channels
-        if len(np.shape(audio_data))>1:
-            # here we assume nframes>2 
-            if np.shape(audio_data)[0] < np.shape(audio_data)[1]:
-                audio_data = audio_data.T
-
-        # create audio file
-        file_path = audio_example_folder + '/' + file_name + '.wav'
-        sf.write(file_path,audio_data,samplerate)
-
+    if type(file) is str:
+        display(Audio(file))
     else:
-        file_path = audio_data
-
-    # play audio
-    display(Audio(file_path))
+        display(Audio(file, rate=int(samplerate)))
     
 def InOut_plot(ax1,X,Y):
     color = 'tab:blue'
@@ -224,8 +199,9 @@ def dc(y_true, y_pred):
     
     '''
     
-    ypow = kb.mean(kb.square(y_true))
-    return kb.square(kb.mean(y_true - y_pred))/(ypow+1e-10)
+    num = tf.square(tf.reduce_mean(y_true - y_pred))
+    den = tf.reduce_mean(tf.square(y_true))
+    return num/(den+1e-10)
 
 def esr(y_true,y_pred):
     '''
@@ -234,8 +210,24 @@ def esr(y_true,y_pred):
     
     '''
     
-    ypow = kb.mean(kb.square(y_true))
-    return kb.mean(kb.square(y_true - y_pred))/(ypow+1e-10)
+    num = tf.reduce_mean(tf.square(y_true - y_pred))
+    den = tf.reduce_mean(tf.square(y_true))
+    return num/(den+1e-10)
+
+def esr_rej(Trej=None):
+    '''
+    
+    Error-to-signal ratio (esr), with the option of rejecting model transients.
+    
+    '''
+    def ESR(y_true,y_pred):
+        # Reject model transients
+        if Trej is not None:
+            y_true = y_true[:,Trej:,:]
+            y_pred = y_pred[:,Trej:,:]
+            
+        return esr(y_true,y_pred)
+    return ESR
 
 def esr_dc(Trej=None, preemphasis=None):
     '''
@@ -244,7 +236,7 @@ def esr_dc(Trej=None, preemphasis=None):
     
     '''
     
-    def loss(y_true,y_pred):
+    def loss_fun(y_true,y_pred):
         # Reject model transients
         if Trej is not None:
             y_true = y_true[:,Trej:,:]
@@ -258,6 +250,8 @@ def esr_dc(Trej=None, preemphasis=None):
             y_true = tf.nn.conv1d(y_true, preemphasis, stride=1, padding='SAME')
             y_pred = tf.nn.conv1d(y_pred, preemphasis, stride=1, padding='SAME')
         
-        ypow = kb.mean(kb.square(y_true))
-        return kb.mean(kb.square(y_true - y_pred))/(ypow+1e-10) + dc_loss
-    return loss
+        # Compute esr loss
+        esr_loss = esr(y_true,y_pred)
+        
+        return esr_loss + dc_loss
+    return loss_fun

@@ -3,8 +3,16 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
-def conv_model(nlayers=10, nchannels=10, Tx=None, Trej=0, preemphasis_weights=[-.95,1], print_summary=False, learning_rate=.001):
-
+def conv_model(nlayers=10, nchannels=10, Tx=None, Trej=0, print_summary=False, learning_rate=.001, name='conv_model', loss='mse', metrics=['mse']):
+    '''
+    
+    Convolutional neural network model.
+    
+    '''
+    
+    # Xavier normal inizializer for the weights
+    initializer = keras.initializers.GlorotNormal()
+    
     # Single convolutional layer
     def conv_block(X,k,dilation):
         Z = layers.Conv1D(filters = nchannels,
@@ -12,8 +20,11 @@ def conv_model(nlayers=10, nchannels=10, Tx=None, Trej=0, preemphasis_weights=[-
                           padding = 'causal',
                           dilation_rate = dilation,
                           activation = 'relu',
-                          name = 'Z'+str(k))(X)
-        Zmix = layers.Conv1D(1,1,name = 'Z'+str(k)+'_mix')(Z)
+                          name = 'Z'+str(k), 
+                          kernel_initializer=initializer)(X)
+        Zmix = layers.Conv1D(1, 1, 
+                             name = 'Z'+str(k)+'_mix', 
+                             kernel_initializer=initializer)(Z)
         X = layers.Add(name = 'X'+str(k+1))([X,Zmix])
         return X, Z
 
@@ -29,26 +40,54 @@ def conv_model(nlayers=10, nchannels=10, Tx=None, Trej=0, preemphasis_weights=[-
 
     # Output layer
     Z = layers.Concatenate(axis=2, name='Z')(Zlist)
-    Y = layers.Conv1D(1,1,name = 'Y')(Z)
+    Y = layers.Conv1D(1, 1, name = 'Y', kernel_initializer=initializer)(Z)
 
     # Create model
-    model = keras.Model(inputs=[X_input], outputs=Y)
+    model = keras.Model(inputs=[X_input], outputs=Y, name=name)
     if print_summary:
         model.summary()
 
-    # Specify the preemphasis filter (used in the loss function)
-    if preemphasis_weights is not None:
-        Preemphasis = tf.constant(preemphasis_weights, 
-                                  shape=[len(preemphasis_weights),1,1], 
-                                  dtype=tf.float32)
-
     # Compile model
     opt = tf.keras.optimizers.Adam(learning_rate)
-    model.compile(optimizer=opt, loss=esr_dc(Trej, Preemphasis), metrics=esr)
+    model.compile(optimizer=opt, loss=loss, metrics=metrics)
     
     return model
 
-def recurrent_model(units=32, celltype='GRU', Tx=None, Trej=0, preemphasis=True, preemphasis_weights=[-.95,1], print_summary=False, learning_rate=.001):
+def recurrent_model(units=32, celltype='GRU', Tx=None, Trej=0, print_summary=False, learning_rate=.001, name='recurrent_model', loss='mse', metrics=['mse']):
+    '''
+    Recurrent neural network model. 
+    
+    '''
+    
+    # Xavier normal inizializer for the weights
+    initializer = keras.initializers.GlorotNormal()
+
+    # specify recurrent cell type
+    if celltype=='GRU':
+        Rcell = layers.GRU(units=units, return_sequences=True, kernel_initializer=initializer, name='Xrec')
+    elif celltype=='LSTM':
+        Rcell = layers.LSTM(units=units, return_sequences=True, kernel_initializer=initializer, name='Xrec')
+    elif celltype=='RNN':
+        Rcell = layers.SimpleRNN(units=units, return_sequences=True, kernel_initializer=initializer, name='Xrec')
+    
+    # Model architecture
+    X_input = layers.Input(shape=(Tx,1), name='X0')
+    X = Rcell(X_input)
+    X = layers.Dense(1, activation='linear', kernel_initializer=initializer, name='Xdense')(X)
+    Y = layers.Add(name='Y')([X,X_input])
+    
+    # Create model
+    model = keras.Model(inputs=[X_input], outputs=Y, name=name)
+    if print_summary:
+        model.summary()
+        
+    # Compile model
+    opt = tf.keras.optimizers.Adam(learning_rate,clipvalue=10)
+    model.compile(optimizer=opt, loss=loss, metrics=metrics)
+    
+    return model
+
+def recurrent_model_old(units=32, celltype='GRU', Tx=None, Trej=0, preemphasis=True, preemphasis_weights=[-.95,1], print_summary=False, learning_rate=.001):
     '''
     Recurrent neural network model with or without pre-emphasis filter. 
     
@@ -75,7 +114,7 @@ def recurrent_model(units=32, celltype='GRU', Tx=None, Trej=0, preemphasis=True,
     # Base model
     Xres = layers.Input(shape=(Tx,1))
     X = Rcell(Xres)
-    X = layers.Dense(1,activation='linear', kernel_initializer=initializer)(X)
+    X = layers.Dense(1, activation='linear', kernel_initializer=initializer)(X)
     Y = layers.Add()([X,Xres])
     
     # Set the output of the model:

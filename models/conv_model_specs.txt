@@ -1,0 +1,10 @@
+model = conv_model(
+nlayers=12, 
+nchannels=16, 
+Tx = None,
+Trej=Trej,  
+learning_rate=.001,
+name=model_name,
+loss=esr_dc(Trej,Preemphasis),
+metrics=esr_rej(Trej)
+)

@@ -1,5 +1,2 @@
 datasets
-model_checkpoint
 references
-
-*.wav
