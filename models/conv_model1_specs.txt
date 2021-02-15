@@ -1,7 +1,7 @@
 model = conv_model(
 nlayers=10, 
-nchannels=32, 
-kernel_size=3,
+nchannels=8, 
+kernel_size=40,
 dilation_rate=2**np.arange(0,10),
 learn_difference=False,
 activation='tanh',

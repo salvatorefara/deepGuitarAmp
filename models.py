@@ -3,25 +3,24 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
-def conv_model(nlayers=10, nchannels=10, Tx=None, Trej=0, print_summary=False, learning_rate=.001, name='conv_model', loss='mse', metrics=['mse']):
+def conv_model(nlayers=1, nchannels=8, kernel_size=2, dilation_rate=1, Tx=None, Trej=0, print_summary=False, learning_rate=.001, name='conv_model', loss='mse', metrics='mse', learn_difference=False, batchnorm=False, initializer = keras.initializers.GlorotNormal(), activation='relu'):
     '''
     
     Convolutional neural network model.
     
     '''
     
-    # Xavier normal inizializer for the weights
-    initializer = keras.initializers.GlorotNormal()
-    
     # Single convolutional layer
-    def conv_block(X,k,dilation):
+    def conv_block(X, k, kernel_size, dilation_rate, batchnorm, activation):
         Z = layers.Conv1D(filters = nchannels,
-                          kernel_size = 2,
+                          kernel_size = kernel_size,
                           padding = 'causal',
-                          dilation_rate = dilation,
-                          activation = 'relu',
+                          dilation_rate = dilation_rate,
                           name = 'Z'+str(k), 
                           kernel_initializer=initializer)(X)
+        if batchnorm is True:
+            Z = layers.BatchNormalization(name='Z'+str(k)+'_norm')(Z)
+        Z = layers.Activation(activation, name='Z'+str(k)+'_'+activation)(Z)
         Zmix = layers.Conv1D(1, 1, 
                              name = 'Z'+str(k)+'_mix', 
                              kernel_initializer=initializer)(Z)
@@ -35,12 +34,16 @@ def conv_model(nlayers=10, nchannels=10, Tx=None, Trej=0, print_summary=False, l
     # Hidden layers - stacked dilated convolutional layers
     Zlist = []
     for k in range(nlayers):
-        X, Z = conv_block(X,k,dilation=2**k)
+        X, Z = conv_block(X, k, kernel_size, int(dilation_rate[k]), batchnorm, activation)
         Zlist.append(Z)
 
     # Output layer
     Z = layers.Concatenate(axis=2, name='Z')(Zlist)
     Y = layers.Conv1D(1, 1, name = 'Y', kernel_initializer=initializer)(Z)
+    
+    # If we want the model to learn the difference between input and output (as done with the recurrent model)
+    if learn_difference is True:
+        Y = layers.Add(name='Ydiff')([Y,X_input])
 
     # Create model
     model = keras.Model(inputs=[X_input], outputs=Y, name=name)
@@ -53,15 +56,12 @@ def conv_model(nlayers=10, nchannels=10, Tx=None, Trej=0, print_summary=False, l
     
     return model
 
-def recurrent_model(units=32, celltype='GRU', Tx=None, Trej=0, print_summary=False, learning_rate=.001, name='recurrent_model', loss='mse', metrics=['mse']):
+def recurrent_model(units=32, celltype='GRU', Tx=None, Trej=0, print_summary=False, learning_rate=.001, name='recurrent_model', loss='mse', metrics='mse', initializer = keras.initializers.GlorotNormal()):
     '''
     Recurrent neural network model. 
     
     '''
     
-    # Xavier normal inizializer for the weights
-    initializer = keras.initializers.GlorotNormal()
-
     # specify recurrent cell type
     if celltype=='GRU':
         Rcell = layers.GRU(units=units, return_sequences=True, kernel_initializer=initializer, name='Xrec')
@@ -83,74 +83,6 @@ def recurrent_model(units=32, celltype='GRU', Tx=None, Trej=0, print_summary=Fal
         
     # Compile model
     opt = tf.keras.optimizers.Adam(learning_rate,clipvalue=10)
-    model.compile(optimizer=opt, loss=loss, metrics=metrics)
-    
-    return model
-
-def recurrent_model_old(units=32, celltype='GRU', Tx=None, Trej=0, preemphasis=True, preemphasis_weights=[-.95,1], print_summary=False, learning_rate=.001):
-    '''
-    Recurrent neural network model with or without pre-emphasis filter. 
-    
-    '''
-    
-    # Xavier normal inizializer for the weights
-    initializer = keras.initializers.GlorotNormal()
-
-    # specify recurrent cell type
-    if celltype=='GRU':
-        Rcell = layers.GRU(units=units, return_sequences=True, kernel_initializer=initializer)
-    elif celltype=='LSTM':
-        Rcell = layers.LSTM(units=units, return_sequences=True, kernel_initializer=initializer)
-    elif celltype=='RNN':
-        Rcell = layers.SimpleRNN(units=units, return_sequences=True, kernel_initializer=initializer)
-    
-    # specify preemphasis filter 
-    if preemphasis:
-        Preemphasis = layers.Conv1D(1,2,padding='valid',use_bias=False,trainable=False, \
-                                   name = 'preemphasis')
-        Preemphasis.build((1,))
-        Preemphasis.set_weights(np.array(preemphasis_weights).reshape((1,2,1,1)))
-    
-    # Base model
-    Xres = layers.Input(shape=(Tx,1))
-    X = Rcell(Xres)
-    X = layers.Dense(1, activation='linear', kernel_initializer=initializer)(X)
-    Y = layers.Add()([X,Xres])
-    
-    # Set the output of the model:
-    # - during training (Trej>0), add a cropping layer to remove model trainsients
-    # - add preemphasis filter if needed 
-    if Trej==0 and not preemphasis:
-        outputs = Y
-    elif Trej==0 and preemphasis:
-        outputs = Preemphasis(Y)
-    elif Trej and not preemphasis:
-        outputs = layers.Cropping1D((Trej,0))(Y)
-    elif Trej and preemphasis:
-        out = layers.Cropping1D((Trej,0), name = 'dc')(Y)
-        
-        # crop less to compensate for the "valid" convolution of the pre-
-        # emphasis filter
-        Ype = layers.Cropping1D((Trej-1,0))(Y)
-        out_pe = Preemphasis(Ype)
-        
-        # return two outputs: after (out_pe) and before (out) the pre-emphasis
-        # filter
-        outputs = [out_pe, out]
-    
-    # create the model
-    model = keras.Model(inputs=[Xres], outputs=outputs)
-    if print_summary:
-        print(model.summary())
-        
-    # compile model
-    opt = tf.keras.optimizers.Adam(learning_rate,clipvalue=10)
-    if Trej and preemphasis:
-        loss = [esr,dc]
-        metrics = [esr,dc]
-    else:
-        loss = esr
-        metrics = esr
     model.compile(optimizer=opt, loss=loss, metrics=metrics)
     
     return model
