@@ -1,0 +1,9 @@
+model = recurrent_model(
+units=16,
+celltype="GRU",
+Tx=None,
+Trej=Trej,
+learning_rate=.01,
+name=model_name,
+loss=esr_dc(Trej,Preemphasis),
+metrics=esr_rej(Trej))
